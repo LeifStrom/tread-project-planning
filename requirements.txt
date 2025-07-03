@@ -1,0 +1,21 @@
+# Core Streamlit and data processing
+streamlit>=1.28.0
+pandas>=2.0.0
+plotly>=5.17.0
+
+# Google Sheets API integration
+gspread>=5.12.0
+google-auth>=2.23.0
+google-auth-oauthlib>=1.1.0
+google-auth-httplib2>=0.1.1
+
+# Date and time handling
+python-dateutil>=2.8.2
+
+# Optional: For better performance and file watching
+watchdog>=3.0.0
+
+# Development and testing (optional)
+pytest>=7.4.0
+black>=23.9.0
+flake8>=6.1.0 
