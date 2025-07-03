@@ -1143,33 +1143,10 @@ def main():
     # Job Management Section
     st.markdown("---")
     display_job_management(df, sheet_url)
-        
-        if not display_df.empty:
-            # Format for display
-            display_df_formatted = display_df.copy()
-            display_df_formatted['Start Date'] = display_df_formatted['Start Date'].dt.strftime('%Y-%m-%d')
-            display_df_formatted['End Date'] = display_df_formatted['End Date'].dt.strftime('%Y-%m-%d')
-            display_df_formatted['Estimated Cost'] = display_df_formatted['Estimated Cost'].apply(lambda x: f"${x:,.0f}")
-            
-            st.dataframe(
-                display_df_formatted,
-                use_container_width=True,
-                hide_index=True
-            )
-            
-            # Summary statistics
-            if show_all:
-                total_cost = df['Estimated Cost'].sum()
-                total_jobs = len(df)
-            else:
-                total_cost = display_df['Estimated Cost'].sum()
-                total_jobs = len(display_df)
-            
-            st.caption(f"**Total:** {total_jobs} jobs | **Total Cost:** ${total_cost:,.0f}")
-        else:
-            st.info("No jobs found for the selected period.")
-    else:
-        st.info("🏗️ No jobs found in your sheet. Use the 'Add New Job' section above to get started!")
+    
+    # Footer
+    st.markdown("---")
+    st.markdown("*Dashboard last updated: {}*".format(datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
 
 if __name__ == "__main__":
     main() 
