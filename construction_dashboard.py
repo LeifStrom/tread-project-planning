@@ -842,6 +842,7 @@ def main():
     # Google Sheet URL input
     sheet_url = st.sidebar.text_input(
         "Google Sheet URL*",
+        value="https://docs.google.com/spreadsheets/d/1E8Onu_CcixIkwRwH8t9-DtSO8st6AQo-cZIgtgvQVoo/edit?usp=sharing",
         placeholder="https://docs.google.com/spreadsheets/d/...",
         help="Paste the full URL of your Google Sheet containing job data"
     )
@@ -859,113 +860,46 @@ def main():
         else:
             st.sidebar.error("Please enter a Google Sheet URL first")
     
-    # Check if Google Sheet URL is provided
-    if not sheet_url:
-        st.info("👈 Please enter your Google Sheet URL in the sidebar to get started.")
+    # Load data with fallback to demo data
+    with st.spinner("Loading data from Google Sheets..."):
+        df = load_data_from_sheet(sheet_url)
+    
+    # If Google Sheets fails, show connection status but continue with demo-like interface
+    if df is None:
+        st.warning("⚠️ Google Sheets connection failed. Please check your credentials setup.")
         
-        # Show setup instructions
-        with st.expander("📋 Setup Instructions", expanded=True):
+        # Show basic setup reminder in expander
+        with st.expander("🔧 Quick Setup Reminder", expanded=False):
             st.markdown("""
-            ### 🔧 Google Sheets Setup
+            **To connect your Google Sheet:**
+            1. Set up Google Cloud credentials (see README.md for detailed steps)
+            2. Share your Google Sheet with the service account email
+            3. Ensure your sheet has these columns: Project, Job Name, Start Date, End Date, Estimated Cost, Estimated Duration, Status
             
-            1. **Create a Google Sheet** with the following columns (exact names required):
-               - `Job Name` (text)
-               - `Start Date` (date, format: YYYY-MM-DD)
-               - `End Date` (date, format: YYYY-MM-DD)
-               - `Estimated Cost` (number)
-               - `Estimated Duration` (number, in days)
-               - `Status` (text: Planned, In Progress, Completed, On Hold, or Cancelled)
-               - `Project` (text: project name)
-            
-            2. **Set up Google Cloud Project:**
-               ```bash
-               # Create a new project or select existing one at:
-               # https://console.cloud.google.com/
-               
-               # Enable required APIs:
-               # - Google Sheets API
-               # - Google Drive API
-               ```
-            
-            3. **Create Service Account:**
-               ```bash
-               # Go to: https://console.cloud.google.com/iam-admin/serviceaccounts
-               # 1. Click "Create Service Account"
-               # 2. Give it a name (e.g., "sheets-dashboard")
-               # 3. Click "Create and Continue"
-               # 4. Skip role assignment (click "Continue")
-               # 5. Click "Done"
-               
-               # Create and download key:
-               # 1. Click on the created service account
-               # 2. Go to "Keys" tab
-               # 3. Click "Add Key" → "Create new key" → "JSON"
-               # 4. Download the JSON file
-               ```
-            
-            4. **Setup Credentials (choose one method):**
-               
-               **Method 1 - Environment Variable (Recommended):**
-               ```bash
-               export GOOGLE_APPLICATION_CREDENTIALS="/path/to/your/credentials.json"
-               ```
-               
-               **Method 2 - Local File:**
-               ```bash
-               # Place the downloaded JSON file as "credentials.json" in the same folder as this app
-               ```
-               
-               **Method 3 - Environment JSON String:**
-               ```bash
-               export GOOGLE_CREDENTIALS='{"type": "service_account", "project_id": "..."}'
-               ```
-            
-            5. **Share Google Sheet:**
-               ```bash
-               # 1. Open your Google Sheet
-               # 2. Click "Share" button
-               # 3. Add the service account email (found in credentials.json)
-               # 4. Give it "Editor" permissions
-               # 5. Click "Send"
-               ```
-            
-            6. **Run the Dashboard:**
-               ```bash
-               streamlit run construction_dashboard.py
-               ```
-            
-            ### 📊 Sample Data Format
-            | Job Name | Start Date | End Date | Estimated Cost | Estimated Duration | Status | Project |
-            |----------|------------|----------|----------------|-------------------|---------|---------|
-            | Foundation Work | 2024-01-15 | 2024-02-28 | 50000 | 44 | In Progress | Downtown Office |
-            | Framing | 2024-03-01 | 2024-04-15 | 75000 | 45 | Planned | Downtown Office |
-            | Electrical Installation | 2024-04-01 | 2024-05-15 | 30000 | 44 | Planned | Residential Complex |
-            
-            ### 🚀 Features Available:
-            - ✅ **Real-time data sync** with Google Sheets
-            - ✅ **Add new jobs** directly from the dashboard
-            - ✅ **Edit existing jobs** with in-place editing
-            - ✅ **Delete jobs** with confirmation
-            - ✅ **Interactive Gantt charts** with status-based colors
-            - ✅ **Budget analysis** and KPI tracking
-            - ✅ **Search and filter** jobs by name and status
-            - ✅ **Monthly/yearly** views for project planning
+            **For now, using demo data to show the interface...**
             """)
-        return
+        
+        # Use demo data as fallback
+        df = pd.DataFrame({
+            'Project': ['Downtown Office', 'Downtown Office', 'Residential Complex', 'Warehouse Project'],
+            'Job Name': ['Foundation Work', 'Framing', 'Electrical Installation', 'Site Preparation'],
+            'Start Date': pd.to_datetime(['2024-01-15', '2024-03-01', '2024-04-01', '2024-02-15']),
+            'End Date': pd.to_datetime(['2024-02-28', '2024-04-15', '2024-05-15', '2024-03-30']),
+            'Estimated Cost': [50000, 75000, 30000, 25000],
+            'Estimated Duration': [44, 45, 44, 43],
+            'Status': ['In Progress', 'Planned', 'Planned', 'Completed']
+        })
+    
+    # Add custom jobs from session state if they exist (for both Google Sheets and demo data)
+    if 'custom_jobs' in st.session_state and st.session_state.custom_jobs:
+        custom_df = pd.DataFrame(st.session_state.custom_jobs)
+        df = pd.concat([df, custom_df], ignore_index=True)
     
     # Initialize session state
     if 'project_budgets' not in st.session_state:
         st.session_state.project_budgets = {}
     if 'completed_jobs' not in st.session_state:
         st.session_state.completed_jobs = set()
-    
-    # Load data
-    with st.spinner("Loading data from Google Sheets..."):
-        df = load_data_from_sheet(sheet_url)
-    
-    if df is None:
-        st.error("❌ Failed to load data. Please check your sheet URL and credentials.")
-        st.stop()
     
     # Project Selection
     st.sidebar.header("View Selection")
@@ -1031,29 +965,43 @@ def main():
                 new_estimated_cost = st.number_input("Estimated Cost ($)", min_value=0, step=1000, format="%d")
                 new_end_date = st.date_input("End Date")
             
-            new_duration = st.number_input("Estimated Duration (days)", min_value=1, value=30, step=1)
-            new_status = st.selectbox("Status", ["Planned", "In Progress", "Completed", "On Hold", "Cancelled"])
-            
             add_job = st.form_submit_button("Add Job")
             
             if add_job:
                 if new_job_name.strip() and new_start_date and new_end_date and new_estimated_cost > 0:
                     if new_end_date >= new_start_date:
-                        job_data = {
+                        # Try to add to Google Sheets if connected, otherwise add to session state
+                        success = add_job_to_sheet(sheet_url, {
                             'Job Name': new_job_name.strip(),
                             'Start Date': new_start_date,
                             'End Date': new_end_date,
                             'Estimated Cost': new_estimated_cost,
-                            'Estimated Duration': new_duration,
-                            'Status': new_status,
+                            'Estimated Duration': (new_end_date - new_start_date).days,
+                            'Status': 'Planned',
                             'Project': selected_project
-                        }
-                        if add_job_to_sheet(sheet_url, job_data):
-                            st.success(f"Job '{new_job_name.strip()}' added successfully!")
+                        })
+                        
+                        if success:
+                            st.success(f"Job '{new_job_name.strip()}' added to Google Sheets!")
                             st.cache_data.clear()
                             st.rerun()
                         else:
-                            st.error("Failed to add job. Please try again.")
+                            st.warning("Google Sheets not connected. Job added to session (will be lost on refresh).")
+                            # Add to session state as fallback
+                            if 'custom_jobs' not in st.session_state:
+                                st.session_state.custom_jobs = []
+                            
+                            new_job = {
+                                'Project': selected_project,
+                                'Job Name': new_job_name.strip(),
+                                'Start Date': pd.Timestamp(new_start_date),
+                                'End Date': pd.Timestamp(new_end_date),
+                                'Estimated Cost': new_estimated_cost,
+                                'Estimated Duration': (new_end_date - new_start_date).days,
+                                'Status': 'Planned'
+                            }
+                            st.session_state.custom_jobs.append(new_job)
+                            st.rerun()
                     else:
                         st.error("End date must be on or after start date!")
                 else:
@@ -1140,9 +1088,24 @@ def main():
     pie_fig = create_project_budget_pie_chart(df, selected_project, budget, st.session_state.completed_jobs)
     st.plotly_chart(pie_fig, use_container_width=True)
     
-    # Job Management Section
+    # About section
     st.markdown("---")
-    display_job_management(df, sheet_url)
+    with st.expander("💡 About This Dashboard"):
+        st.markdown("""
+        This dashboard integrates with Google Sheets for real-time construction job management.
+        
+        **Key Features:**
+        - Real-time Google Sheets integration
+        - Project-based job tracking
+        - Budget analysis with completion tracking
+        - Interactive pie charts showing budget allocation
+        - Job completion status with visual indicators
+        
+        **To connect your Google Sheets:**
+        1. Set up Google Cloud credentials (see README.md for detailed steps)
+        2. Share your Google Sheet with the service account email
+        3. Refresh the data to sync with your sheet
+        """)
     
     # Footer
     st.markdown("---")
