@@ -14,16 +14,16 @@ import time
 
 # Page configuration
 st.set_page_config(
-    page_title="Construction Jobs Dashboard",
+    page_title="Tread Project Planning",
     page_icon="🏗️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 # Constants
-TOTAL_PROJECT_BUDGET = 1000000  # Default budget - can be overridden from sheet
+TOTAL_PROJECT_BUDGET = 500000  # Default budget - can be overridden from sheet
 SHEET_NAME = "ConstructionJobs"
-REQUIRED_COLUMNS = ['Job Name', 'Start Date', 'End Date', 'Estimated Cost', 'Estimated Duration', 'Status']
+REQUIRED_COLUMNS = ['Job Name', 'Start Date', 'End Date', 'Estimated Cost', 'Estimated Duration', 'Status', 'Project']
 
 # Updated scope to include write permissions
 SCOPE = [
@@ -265,36 +265,40 @@ def create_gantt_chart(df: pd.DataFrame, selected_month: datetime.date) -> go.Fi
     
     return fig
 
-def create_budget_analysis(df: pd.DataFrame, selected_month: datetime.date, total_budget: float) -> tuple:
-    """
-    Create budget analysis charts and calculate KPIs.
-    Returns: (daily_spend_fig, kpi_dict)
-    """
-    month_start = selected_month.replace(day=1)
-    month_end = (month_start + relativedelta(months=1)) - datetime.timedelta(days=1)
+def create_budget_analysis(df: pd.DataFrame, selected_project: str, total_budget: float, completed_jobs=None) -> tuple:
+    """Create budget analysis charts and calculate KPIs."""
+    if completed_jobs is None:
+        completed_jobs = set()
     
-    # Get jobs starting in the selected month
-    month_jobs = df[
-        (df['Start Date'] >= pd.Timestamp(month_start)) & 
-        (df['Start Date'] <= pd.Timestamp(month_end))
-    ].copy()
+    # Get jobs for the selected project
+    project_jobs = df[df['Project'] == selected_project].copy()
     
-    # Calculate cumulative spend through the selected month
-    cumulative_jobs = df[df['Start Date'] <= pd.Timestamp(month_end)].copy()
-    total_spend_to_date = cumulative_jobs['Estimated Cost'].sum()
-    budget_used_pct = (total_spend_to_date / total_budget) * 100
+    # Calculate project spend
+    project_spend = project_jobs['Estimated Cost'].sum()
+    budget_used_pct = (project_spend / total_budget) * 100
     
-    # Create daily spend chart for the month
-    if not month_jobs.empty:
+    # Calculate job completion status
+    total_jobs = len(project_jobs)
+    jobs_complete = 0
+    
+    for _, job in project_jobs.iterrows():
+        job_key = f"{job['Job Name']}_{job['Start Date'].strftime('%Y%m%d')}"
+        if job_key in completed_jobs:
+            jobs_complete += 1
+    
+    jobs_in_progress = total_jobs - jobs_complete
+    
+    # Create daily spend chart for the project
+    if not project_jobs.empty:
         # Group by start date and sum costs
-        daily_spend = month_jobs.groupby('Start Date')['Estimated Cost'].sum().reset_index()
+        daily_spend = project_jobs.groupby('Start Date')['Estimated Cost'].sum().reset_index()
         daily_spend['Cumulative Spend'] = daily_spend['Estimated Cost'].cumsum()
         
-        # Create subplot with secondary y-axis
+        # Create subplot with secondary y-axis using new syntax
         fig = make_subplots(
             rows=1, cols=1,
             specs=[[{"secondary_y": True}]],
-            subplot_titles=[f"Daily Job Starts & Spend - {selected_month.strftime('%B %Y')}"]
+            subplot_titles=[f"Daily Job Starts & Spend - {selected_project}"]
         )
         
         # Daily spend bars
@@ -331,28 +335,26 @@ def create_budget_analysis(df: pd.DataFrame, selected_month: datetime.date, tota
     else:
         fig = go.Figure()
         fig.add_annotation(
-            text="No jobs starting this month",
+            text="No jobs found for this project",
             xref="paper", yref="paper",
             x=0.5, y=0.5, xanchor='center', yanchor='middle',
             showarrow=False, font=dict(size=16)
         )
-        fig.update_layout(title=f"Daily Job Starts & Spend - {selected_month.strftime('%B %Y')}")
+        fig.update_layout(title=f"Project Budget Analysis - {selected_project}")
     
     # Calculate KPIs
     kpis = {
-        'total_spend_to_date': total_spend_to_date,
+        'total_spend_to_date': project_spend,
         'budget_used_pct': budget_used_pct,
-        'remaining_budget': total_budget - total_spend_to_date,
-        'jobs_this_month': len(month_jobs),
-        'spend_this_month': month_jobs['Estimated Cost'].sum()
+        'remaining_budget': total_budget - project_spend,
+        'jobs_in_progress': jobs_in_progress,
+        'jobs_complete': jobs_complete
     }
     
     return fig, kpis
 
 def display_kpi_cards(kpis: Dict[str, Any], total_budget: float):
-    """
-    Display KPI cards in a grid layout.
-    """
+    """Display KPI cards in a grid layout."""
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
@@ -389,15 +391,117 @@ def display_kpi_cards(kpis: Dict[str, Any], total_budget: float):
     
     with col3:
         st.metric(
-            label="Jobs This Month",
-            value=kpis['jobs_this_month']
+            label="Jobs in Progress",
+            value=kpis['jobs_in_progress']
         )
     
     with col4:
         st.metric(
-            label="Spend This Month",
-            value=f"${kpis['spend_this_month']:,.0f}"
+            label="Jobs Complete",
+            value=kpis['jobs_complete']
         )
+
+def create_project_budget_pie_chart(df: pd.DataFrame, selected_project: str, total_budget: float, completed_jobs=None) -> go.Figure:
+    """Create a pie chart showing jobs as slices relative to project budget."""
+    if completed_jobs is None:
+        completed_jobs = set()
+    
+    # Filter jobs for the selected project
+    project_jobs = df[df['Project'] == selected_project].copy()
+    
+    if project_jobs.empty:
+        fig = go.Figure()
+        fig.add_annotation(
+            text="No jobs found for this project",
+            xref="paper", yref="paper",
+            x=0.5, y=0.5, xanchor='center', yanchor='middle',
+            showarrow=False, font=dict(size=16)
+        )
+        fig.update_layout(title=f"Project Budget Breakdown - {selected_project}")
+        return fig
+    
+    # Calculate total job costs
+    total_job_costs = project_jobs['Estimated Cost'].sum()
+    remaining_budget = max(0, total_budget - total_job_costs)
+    
+    # Prepare data for pie chart
+    labels = []
+    values = []
+    colors = []
+    hover_texts = []
+    
+    # Color palette
+    job_colors = px.colors.qualitative.Set3
+    
+    # Add each job as a slice
+    for i, (_, job) in enumerate(project_jobs.iterrows()):
+        job_key = f"{job['Job Name']}_{job['Start Date'].strftime('%Y%m%d')}"
+        is_completed = job_key in completed_jobs
+        
+        # Use different colors for completed vs in-progress jobs
+        if is_completed:
+            color = '#90EE90'  # Light green for completed
+        else:
+            color = job_colors[i % len(job_colors)]
+        
+        labels.append(job['Job Name'])
+        values.append(job['Estimated Cost'])
+        colors.append(color)
+        
+        # Calculate percentage of budget
+        percentage = (job['Estimated Cost'] / total_budget) * 100
+        status = "✅ Complete" if is_completed else "🔄 In Progress"
+        
+        hover_text = (
+            f"<b>{job['Job Name']}</b><br>"
+            f"Status: {status}<br>"
+            f"Cost: ${job['Estimated Cost']:,.0f}<br>"
+            f"% of Budget: {percentage:.1f}%<br>"
+            f"Start: {job['Start Date'].strftime('%Y-%m-%d')}<br>"
+            f"End: {job['End Date'].strftime('%Y-%m-%d')}"
+        )
+        hover_texts.append(hover_text)
+    
+    # Add remaining budget as a slice (if any)
+    if remaining_budget > 0:
+        labels.append('Remaining Budget')
+        values.append(remaining_budget)
+        colors.append('#E8E8E8')  # Light gray for remaining budget
+        remaining_percentage = (remaining_budget / total_budget) * 100
+        hover_texts.append(
+            f"<b>Remaining Budget</b><br>"
+            f"Amount: ${remaining_budget:,.0f}<br>"
+            f"% of Budget: {remaining_percentage:.1f}%"
+        )
+    
+    # Create pie chart
+    fig = go.Figure(data=[go.Pie(
+        labels=labels,
+        values=values,
+        marker=dict(colors=colors),
+        hovertemplate="%{customdata}<extra></extra>",
+        customdata=hover_texts,
+        textinfo='label+percent',
+        textposition='auto'
+    )])
+    
+    # Calculate budget utilization
+    budget_used_percentage = (total_job_costs / total_budget) * 100
+    
+    fig.update_layout(
+        title=f"Project Budget Breakdown - {selected_project}<br><sub>Budget Utilization: {budget_used_percentage:.1f}% (${total_job_costs:,.0f} of ${total_budget:,.0f})</sub>",
+        height=500,
+        showlegend=True,
+        legend=dict(
+            orientation="v",
+            yanchor="middle",
+            y=0.5,
+            xanchor="left",
+            x=1.01
+        )
+    )
+    
+    return fig
 
 def validate_job_data(job_name: str, start_date: datetime.date, end_date: datetime.date, cost: float, duration: int) -> List[str]:
     """Validate job data and return list of errors."""
@@ -742,15 +846,6 @@ def main():
         help="Paste the full URL of your Google Sheet containing job data"
     )
     
-    # Budget configuration
-    budget = st.sidebar.number_input(
-        "Total Project Budget ($)",
-        min_value=0,
-        value=TOTAL_PROJECT_BUDGET,
-        step=10000,
-        format="%d"
-    )
-    
     # Data refresh button
     st.sidebar.markdown("---")
     st.sidebar.header("🔄 Data Management")
@@ -763,26 +858,6 @@ def main():
             st.sidebar.success("✅ Data refreshed!")
         else:
             st.sidebar.error("Please enter a Google Sheet URL first")
-    
-    # Date selection
-    st.sidebar.header("📅 View Selection")
-    
-    # Year and month selection
-    current_date = datetime.date.today()
-    selected_year = st.sidebar.selectbox(
-        "Year",
-        options=list(range(current_date.year - 2, current_date.year + 3)),
-        index=2  # Current year
-    )
-    
-    selected_month = st.sidebar.selectbox(
-        "Month",
-        options=list(range(1, 13)),
-        index=current_date.month - 1,
-        format_func=lambda x: datetime.date(2000, x, 1).strftime('%B')
-    )
-    
-    selected_date = datetime.date(selected_year, selected_month, 1)
     
     # Check if Google Sheet URL is provided
     if not sheet_url:
@@ -800,6 +875,7 @@ def main():
                - `Estimated Cost` (number)
                - `Estimated Duration` (number, in days)
                - `Status` (text: Planned, In Progress, Completed, On Hold, or Cancelled)
+               - `Project` (text: project name)
             
             2. **Set up Google Cloud Project:**
                ```bash
@@ -859,11 +935,11 @@ def main():
                ```
             
             ### 📊 Sample Data Format
-            | Job Name | Start Date | End Date | Estimated Cost | Estimated Duration | Status |
-            |----------|------------|----------|----------------|-------------------|---------|
-            | Foundation Work | 2024-01-15 | 2024-02-28 | 50000 | 44 | In Progress |
-            | Framing | 2024-03-01 | 2024-04-15 | 75000 | 45 | Planned |
-            | Electrical Installation | 2024-04-01 | 2024-05-15 | 30000 | 44 | Planned |
+            | Job Name | Start Date | End Date | Estimated Cost | Estimated Duration | Status | Project |
+            |----------|------------|----------|----------------|-------------------|---------|---------|
+            | Foundation Work | 2024-01-15 | 2024-02-28 | 50000 | 44 | In Progress | Downtown Office |
+            | Framing | 2024-03-01 | 2024-04-15 | 75000 | 45 | Planned | Downtown Office |
+            | Electrical Installation | 2024-04-01 | 2024-05-15 | 30000 | 44 | Planned | Residential Complex |
             
             ### 🚀 Features Available:
             - ✅ **Real-time data sync** with Google Sheets
@@ -877,6 +953,12 @@ def main():
             """)
         return
     
+    # Initialize session state
+    if 'project_budgets' not in st.session_state:
+        st.session_state.project_budgets = {}
+    if 'completed_jobs' not in st.session_state:
+        st.session_state.completed_jobs = set()
+    
     # Load data
     with st.spinner("Loading data from Google Sheets..."):
         df = load_data_from_sheet(sheet_url)
@@ -885,64 +967,182 @@ def main():
         st.error("❌ Failed to load data. Please check your sheet URL and credentials.")
         st.stop()
     
-    # Main content
-    st.header(f"📊 Dashboard for {selected_date.strftime('%B %Y')}")
+    # Project Selection
+    st.sidebar.header("View Selection")
     
-    # Display KPI cards
-    if not df.empty:
-        _, kpis = create_budget_analysis(df, selected_date, budget)
-        display_kpi_cards(kpis, budget)
+    # Get available projects
+    if not df.empty and 'Project' in df.columns:
+        available_projects = sorted(df['Project'].unique().tolist())
+        
+        if not available_projects:
+            st.error("No projects found in the data. Please ensure your sheet has a 'Project' column.")
+            return
+        
+        # Project selection dropdown
+        selected_project = st.sidebar.selectbox(
+            "Project",
+            options=available_projects,
+            index=0
+        )
     else:
-        st.info("No data available for KPI calculation.")
+        st.error("No data available or missing 'Project' column.")
+        return
     
-    st.markdown("---")
+    # Budget Configuration
+    st.sidebar.header("Configuration")
     
-    # Add Job Section
-    with st.expander("➕ Add New Job", expanded=False):
-        display_add_job_form(sheet_url)
+    # Budget configuration
+    budget_input = st.sidebar.number_input(
+        "Total Project Budget ($)",
+        min_value=0,
+        value=TOTAL_PROJECT_BUDGET,
+        step=10000,
+        format="%d"
+    )
     
-    st.markdown("---")
-    
-    # Create two columns for the main charts
-    if not df.empty:
-        col1, col2 = st.columns([3, 2])
-        
-        with col1:
-            st.subheader("📅 Job Schedule - Gantt Chart")
-            gantt_fig = create_gantt_chart(df, selected_date)
-            st.plotly_chart(gantt_fig, use_container_width=True)
-        
-        with col2:
-            st.subheader("💰 Budget Analysis")
-            budget_fig, _ = create_budget_analysis(df, selected_date, budget)
-            st.plotly_chart(budget_fig, use_container_width=True)
-        
-        st.markdown("---")
-        
-        # Job Management
-        display_job_management(df, sheet_url)
-        
-        st.markdown("---")
-        
-        # Data table
-        st.subheader("📊 Job Data Summary")
-        
-        # Filter options
-        col1, col2 = st.columns(2)
-        with col1:
-            show_all = st.checkbox("Show all jobs", value=False)
-        with col2:
-            if not show_all:
-                st.info(f"Showing jobs for {selected_date.strftime('%B %Y')}")
-        
-        # Display filtered data
-        if show_all:
-            display_df = df.copy()
+    # Set budget button
+    if st.sidebar.button("Set", key="set_budget_btn"):
+        if selected_project:
+            st.session_state.project_budgets[selected_project] = budget_input
+            st.sidebar.success(f"Budget set for {selected_project}")
         else:
-            month_start = selected_date.replace(day=1)
-            month_end = (month_start + relativedelta(months=1)) - datetime.timedelta(days=1)
-            mask = (df['Start Date'] <= pd.Timestamp(month_end)) & (df['End Date'] >= pd.Timestamp(month_start))
-            display_df = df[mask].copy()
+            st.sidebar.error("Please select a project first")
+    
+    # Get current project budget
+    budget = st.session_state.project_budgets.get(selected_project, TOTAL_PROJECT_BUDGET)
+    
+    # Main content
+    st.header(f"Dashboard for {selected_project}")
+    
+    # Filter by selected project
+    display_df = df[df['Project'] == selected_project].copy()
+    
+    # Job Status Overview - Process checkboxes FIRST so state is updated before KPIs
+    st.subheader("📊 Job Status Overview")
+    
+    # Add new job functionality
+    with st.expander("➕ Add New Job", expanded=False):
+        with st.form("add_job_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                new_job_name = st.text_input("Job Name", placeholder="e.g., Foundation Work")
+                new_start_date = st.date_input("Start Date")
+            with col2:
+                new_estimated_cost = st.number_input("Estimated Cost ($)", min_value=0, step=1000, format="%d")
+                new_end_date = st.date_input("End Date")
+            
+            new_duration = st.number_input("Estimated Duration (days)", min_value=1, value=30, step=1)
+            new_status = st.selectbox("Status", ["Planned", "In Progress", "Completed", "On Hold", "Cancelled"])
+            
+            add_job = st.form_submit_button("Add Job")
+            
+            if add_job:
+                if new_job_name.strip() and new_start_date and new_end_date and new_estimated_cost > 0:
+                    if new_end_date >= new_start_date:
+                        job_data = {
+                            'Job Name': new_job_name.strip(),
+                            'Start Date': new_start_date,
+                            'End Date': new_end_date,
+                            'Estimated Cost': new_estimated_cost,
+                            'Estimated Duration': new_duration,
+                            'Status': new_status,
+                            'Project': selected_project
+                        }
+                        if add_job_to_sheet(sheet_url, job_data):
+                            st.success(f"Job '{new_job_name.strip()}' added successfully!")
+                            st.cache_data.clear()
+                            st.rerun()
+                        else:
+                            st.error("Failed to add job. Please try again.")
+                    else:
+                        st.error("End date must be on or after start date!")
+                else:
+                    st.error("Please fill in all fields with valid values!")
+    
+    if not display_df.empty:
+        # Create interactive table with checkboxes
+        st.write("**Job Status Overview:**")
+        
+        # Add column headers
+        col1, col2, col3, col4, col5 = st.columns([0.8, 2, 1.2, 1.2, 1.2])
+        with col1:
+            st.markdown("**Complete**")
+        with col2:
+            st.markdown("**Job Name**")
+        with col3:
+            st.markdown("**Start Date**")
+        with col4:
+            st.markdown("**End Date**")
+        with col5:
+            st.markdown("**Estimated Cost**")
+        
+        st.markdown("---")
+        
+        for idx, row in display_df.iterrows():
+            job_key = f"{row['Job Name']}_{row['Start Date'].strftime('%Y%m%d')}"
+            
+            # Create columns for the job row
+            col1, col2, col3, col4, col5 = st.columns([0.8, 2, 1.2, 1.2, 1.2])
+            
+            with col1:
+                checkbox_key = f"complete_{job_key}"
+                
+                # Initialize checkbox state if not exists
+                if checkbox_key not in st.session_state:
+                    st.session_state[checkbox_key] = job_key in st.session_state.completed_jobs
+                
+                # Checkbox for completion status
+                is_complete = st.checkbox(
+                    label=f"Complete {row['Job Name']}",
+                    key=checkbox_key,
+                    label_visibility="collapsed"
+                )
+                
+                # Update completed jobs set based on checkbox state
+                if is_complete:
+                    st.session_state.completed_jobs.add(job_key)
+                else:
+                    st.session_state.completed_jobs.discard(job_key)
+            
+            # Row styling based on completion
+            if is_complete:
+                row_style = "background-color: #d4edda; padding: 8px; border-radius: 4px; margin: 2px 0;"
+            else:
+                row_style = "padding: 8px; margin: 2px 0;"
+            
+            with col2:
+                st.markdown(f"<div style='{row_style}'><strong>{row['Job Name']}</strong></div>", unsafe_allow_html=True)
+            with col3:
+                st.markdown(f"<div style='{row_style}'>{row['Start Date'].strftime('%Y-%m-%d')}</div>", unsafe_allow_html=True)
+            with col4:
+                st.markdown(f"<div style='{row_style}'>{row['End Date'].strftime('%Y-%m-%d')}</div>", unsafe_allow_html=True)
+            with col5:
+                st.markdown(f"<div style='{row_style}'>${row['Estimated Cost']:,.0f}</div>", unsafe_allow_html=True)
+        
+        # Summary statistics
+        total_cost = display_df['Estimated Cost'].sum()
+        total_jobs = len(display_df)
+        
+        st.caption(f"**Total:** {total_jobs} jobs | **Total Cost:** ${total_cost:,.0f}")
+    else:
+        st.info("No jobs found for the selected project.")
+    
+    st.markdown("---")
+    
+    # Now calculate and display KPI cards with updated state
+    _, kpis = create_budget_analysis(df, selected_project, budget, st.session_state.completed_jobs)
+    display_kpi_cards(kpis, budget)
+    
+    st.markdown("---")
+    
+    # Project Budget Pie Chart
+    st.subheader("📊 Project Budget Breakdown")
+    pie_fig = create_project_budget_pie_chart(df, selected_project, budget, st.session_state.completed_jobs)
+    st.plotly_chart(pie_fig, use_container_width=True)
+    
+    # Job Management Section
+    st.markdown("---")
+    display_job_management(df, sheet_url)
         
         if not display_df.empty:
             # Format for display
